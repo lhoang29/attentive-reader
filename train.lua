@@ -13,7 +13,7 @@ cmd:option('-datafile', 'qa01.hdf5', 'data file')
 -- Hyperparameters
 cmd:option('-M',128,'mini-batch size')
 cmd:option('-eta',0.01,'learning rate hyperparameter for lr/nn')
-cmd:option('-N',50,'num epochs hyperparameter for lr/nn')
+cmd:option('-N',250,'num epochs hyperparameter for lr/nn')
 cmd:option('-D0',20,'num outputs of lookup layer of nn')
 cmd:option('-Dmt',20,'dimension of m(t) in Attentive Reader model')
 cmd:option('-Dg',20,'dimension of g(d,q) in Attentive Reader model')
