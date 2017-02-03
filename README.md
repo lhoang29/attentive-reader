@@ -1,6 +1,6 @@
 # Attentive Reader
 
-Torch implementation of Attentive Reader network from "Teaching Machines to Read and Comprehend" ([Hermann, 2015](https://arxiv.org/pdf/1506.03340v3)). Supports Adjacent Weight Tying, Position Encoding, Temporal Encoding and Linear Start. Code uses v1.0 of [bAbI dataset](https://research.fb.com/projects/babi/) with 1k questions per task.
+Torch implementation of Attentive Reader network from "Teaching Machines to Read and Comprehend" ([Hermann, 2015](https://arxiv.org/pdf/1506.03340v3)). Code uses v1.0 of [bAbI dataset](https://research.fb.com/projects/babi/) with 1k questions per task.
 
 ## Prerequisites:
 - Python 2.7
