@@ -9,30 +9,15 @@ cmd = torch.CmdLine()
 
 -- Cmd Args
 cmd:option('-datafile', 'qa01.hdf5', 'data file')
-cmd:option('-classifier', 'atr', 'classifier to use')
 
 -- Hyperparameters
-cmd:option('-nensemble',1,'Number of networks to train in an ensemble')
-cmd:option('-alpha_emission', 0.001, 'alpha in laplace smoothing (HMM)')
-cmd:option('-M',128,'mini-batch size hyperparameter for lr')
+cmd:option('-M',128,'mini-batch size')
 cmd:option('-eta',0.01,'learning rate hyperparameter for lr/nn')
-cmd:option('-maxnorm',5, 'max norm for RNN models')
-cmd:option('-N',5,'num epochs hyperparameter for lr/nn')
+cmd:option('-N',50,'num epochs hyperparameter for lr/nn')
 cmd:option('-D0',20,'num outputs of lookup layer of nn')
 cmd:option('-Dmt',20,'dimension of m(t) in Attentive Reader model')
 cmd:option('-Dg',20,'dimension of g(d,q) in Attentive Reader model')
 cmd:option('-Dlstm',20,'num outputs of LSTM layer')
-cmd:option('-Dhid',30,'num hidden units at second layer of nn')
-cmd:option('-pretrain',false,'use pretrained embeddings in nn')
-cmd:option('-debug',false,'debug mode to print diagnostics')
-
-
--- Mem NN Model parameters
-cmd:option('-k',3,'num hops for MemNN Model')
-cmd:option('-max_history',15,'max history for memNN')
-cmd:option('-max_sent_len',20,'max sent len for memNN')
-cmd:option('-pe',false,'enable position encoding for memNN')
-cmd:option('-te',false,'enable temporal encoding for memNN')
 
 -- LSTM parameters
 cmd:option('-rnn_type','flstm', 'type of rnn model. options are lstm / flstm / gru')
@@ -58,12 +43,8 @@ function main()
     print("Using CPU")
    end
 
-   if opt.classifier == 'atr' then -- attentive reader
-     opt.bidirectional = true
-     runATR()
-   else
-     print("NOT IMPLEMENTED")
-   end
+   opt.bidirectional = true
+   runATR()
 end
 
 function runATR()
@@ -121,7 +102,6 @@ function createATR()
 
   -- Compute u = q_forward(|Q|) + q_backward(1)
   -- Questions and Stories use separate BiLSTM but same architecture
-  -- NOTE: not quite correct because sequence contains padded words
   u = Yd:clone() -- table of size LQ : [batch_size x bilstm_size]
   u:add(nn.ConcatTable()
     :add(nn.Sequential() -- final q_forward
@@ -219,7 +199,6 @@ function trainATR()
   local preds
   local Xstory, Xquestion, Y
   local params, gradparams = model:getParameters()
-  -- for i=1,params:size(1) do params[i] = torch.rand(1)[1]/10 - 0.05 end -- IMPORTANT
   if opt.cuda then
     trainLoss = torch.zeros(opt.N):cuda()
     stories = train_stories:t():cuda()
@@ -234,13 +213,10 @@ function trainATR()
 
   model:zeroGradParameters()
 
-  -- for i=1,1 do
   for i = 1, opt.N do
     idxs = torch.randperm(nq):long()
     model:training() -- make sure drop out is used in training
     for j = 1, math.ceil(nq / opt.M)  do
-    -- for j=1,1 do
-      -- zeroATRLookupTable()
       model:forget() -- forget states for other stories
 
       last_index = j * opt.M < nq and j * opt.M or nq
@@ -262,9 +238,6 @@ function trainATR()
       model:backward({Xstory, Xquestion}, dLdpreds)
 
       model:updateParameters(eta)
-
-      -- regularization
-      -- model:maxParamNorm(opt.maxnorm)
     end
     local accuracy = testATR()
     print(
@@ -283,7 +256,6 @@ function trainATR()
 end
 
 function testATR()
-  -- zeroATRLookupTable()
   model:evaluate() -- make sure drop out is not used in testing
   nq_test = test_stories:size(1)
 
@@ -318,19 +290,6 @@ function testATR()
   return correct / Y_hat:size(1)
 end
 
-
-function zeroATRLookupTable()
-  Yd:get(1).weight[idx_pad]:zero()
-  Yd:get(1).weight[idx_start]:zero()
-  Yd:get(1).weight[idx_end]:zero()
-  Yd:get(1).weight[idx_rare]:zero()
-
-  u:get(1).weight[idx_pad]:zero()
-  u:get(1).weight[idx_start]:zero()
-  u:get(1).weight[idx_end]:zero()
-  u:get(1).weight[idx_rare]:zero()
-end
-
 function makePosEncMat(input)
   input:zero()
 
@@ -351,99 +310,6 @@ function makePosEncMat(input)
       end
     end
   end
-
-end
-
--- convert 1 x all_stories_by_question to num_stories x max_single_story_len
-function storyWideToLong(X,X_markers,q_id,max_history,max_sent_len)
-
-  local uniq_sent = unique(X_markers[q_id])
-  uniq_sent = uniq_sent[uniq_sent:ne(0)] -- no padding
-
-  local sent_table = {}
-
-  -- get the sentences in a table
-  for j=uniq_sent:size(1),1,-1 do
-    local sent = X[q_id][X_markers[q_id]:eq(uniq_sent[j])]
-    local sent2 = sent[sent:ne(idx_pad)]
-    sent_table[#sent_table +1] = sent2:view(1,sent2:size(1))
-  end
-
-  --pad to get the same size and return
-  local pad_tensor = torch.LongTensor({idx_pad})
-  local hist_len = #sent_table
-
-
-  for j=1,max_history do
-    -- we have actual hisotry
-    if j <= hist_len then
-      local sent_len = sent_table[j]:size(2)
-      if max_sent_len > sent_len then
-        sent_table[j] = torch.cat(sent_table[j],
-                        torch.repeatTensor(pad_tensor, max_sent_len - sent_len):view(1,max_sent_len - sent_len))
-      end
-    -- add padding
-    else
-      sent_table[j] =  torch.repeatTensor(pad_tensor, max_sent_len):view(1,max_sent_len)
-    end
-  end
-
-  -- if we have more hisotry than the max allowed, truncate it
-  if hist_len > max_history then
-    for j=(max_history+1),hist_len do
-      sent_table[j] = nil
-    end
-  end
-
-  local t = nn.JoinTable(1)
-  return t:forward(sent_table), uniq_sent
-end
-
-function resetPE()
-  makePosEncMat(A_pe.weight)
-  makePosEncMat(B_pe.weight)
-  makePosEncMat(C_pe.weight)
-end
-
-function zeroLookupTable()
-  A.modules[1].weight[idx_pad]:zero()
-  A.modules[1].weight[idx_start]:zero()
-  A.modules[1].weight[idx_end]:zero()
-  A.modules[1].weight[idx_rare]:zero()
-
-  B.modules[1].weight[idx_pad]:zero()
-  B.modules[1].weight[idx_start]:zero()
-  B.modules[1].weight[idx_end]:zero()
-  B.modules[1].weight[idx_rare]:zero()
-
-  C.modules[1].weight[idx_pad]:zero()
-  C.modules[1].weight[idx_start]:zero()
-  C.modules[1].weight[idx_end]:zero()
-  C.modules[1].weight[idx_rare]:zero()
-end
-
--- normalize matrix by dim
-function normalize(x,dim)
-  dim = dim or 1
-  local y = x:sum(dim)
-  y[torch.eq(y,0)] = 1 -- fix zeros
-
-  return torch.cdiv(x,y:expand(x:size()))
-end
-
-function printWOPad(x)
-  print(x[x:ne(idx_pad)])
-end
-
-function unique(x)
-  local seenValues,seenValues_a = {},{}
-  for i=1,x:size(1) do
-    if seenValues[x[i]] == nil then
-      seenValues[x[i]] = true
-      seenValues_a[#seenValues_a + 1] = x[i]
-    end
-  end
-  return torch.Tensor(seenValues_a)
 end
 
 function writeToFile(obj,f)
@@ -481,11 +347,6 @@ function trimData()
   local max_LQ_train = train_questions_bound:max()
   local max_LQ_test  = test_questions_bound:max()
   LQ = max_LQ_train < max_LQ_test and max_LQ_test or max_LQ_train
-
-  if opt.debug then
-    nq = 21
-    -- nq = train_stories:size(1)
-  end
 
   if LS < 500 then
     train_stories = train_stories:sub(1,nq,1,LS)
@@ -534,19 +395,6 @@ function trimData()
 
   print(string.format('LS = %d, LQ = %d, nq = %d',
     LS, LQ, nq))
-
-  -- print('train_stories')
-  -- print(train_stories)
-  -- print('train_questions')
-  -- print(train_questions)
-  -- print('train_answers')
-  -- print(train_answers)
-  -- print('test_stories')
-  -- print(test_stories)
-  -- print('test_questions')
-  -- print(test_questions)
-  -- print('test_answers')
-  -- print(test_answers)
 end
 
 function load()
